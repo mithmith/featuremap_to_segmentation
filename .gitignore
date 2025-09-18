@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.build/
+dist/
+pip-wheel-metadata/
+
+# Venv
+.venv/
+venv/
+env/
+
+# Tools & caches
+.ipynb_checkpoints/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.pytype/
+.cache/
+
+# Editors/OS
+.DS_Store
+Thumbs.db
+
+# Local settings (обычно не коммитят)
+.vscode/
+.env
+.env.*
+
+*.pth
+*.pt
+*.csv
+*.png
+*.jpg
