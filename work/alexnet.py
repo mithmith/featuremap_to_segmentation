@@ -13,20 +13,32 @@ class AlexNet(nn.Module):
         super().__init__()
 
         self.features = nn.Sequential(
+            # conv1.block
             nn.Conv2d(3, 32, kernel_size=7), nn.ReLU(inplace=True),
             nn.Conv2d(32, 32, kernel_size=3), nn.ReLU(inplace=True),
+
+            # maxpool1
             nn.MaxPool2d(2),
 
+            # conv2.block
             nn.Conv2d(32, 64, kernel_size=3), nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, kernel_size=3), nn.ReLU(inplace=True),
+            
+            # maxpool2
             nn.MaxPool2d(2), nn.Dropout(0.2),
 
+            # conv3.block
             nn.Conv2d(64, 64, kernel_size=3), nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, kernel_size=3), nn.ReLU(inplace=True),
+
+            # maxpool3
             nn.MaxPool2d(2), nn.Dropout(0.2),
 
+            # conv4.block
             nn.Conv2d(64, 96, kernel_size=3), nn.ReLU(inplace=True),
             nn.Conv2d(96, 96, kernel_size=3), nn.ReLU(inplace=True),
+
+            # maxpool4
             nn.MaxPool2d(3), nn.Dropout(0.2),
         )
 
