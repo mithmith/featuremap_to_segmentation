@@ -216,22 +216,7 @@ for p in sel_paths:
     fig.savefig(TILES_DIR / tile_name, dpi=180)
     plt.close(fig)
 
-    # --- ИНТЕГРАЛЬНАЯ КАРТА (float 0..1, без бинаризации) ---
-    integral = torch.stack(ch_maps, dim=0).sum(0)  # H×W
-    integral = normalize_01(integral)
-
-    raw_path = INT_DIR / f"{p.stem}__{args.model}__integral.png"
-    overlay_path = INT_DIR / f"{p.stem}__{args.model}__integral_overlay.png"
-    plt.imsave(raw_path, integral.numpy(), cmap="magma")
-
-    plt.figure(figsize=(4.5,4.5))
-    plt.imshow(base_np)
-    plt.imshow(integral.numpy(), cmap="jet", alpha=0.45)
-    plt.title(f"{p.stem} | integral | {MODEL_LABEL}")
-    plt.axis("off"); plt.tight_layout()
-    plt.savefig(overlay_path, dpi=180); plt.close()
-
-    print(f"[ok] {p.name}: tiles → {tile_name}, integral → {overlay_path.name}")
+    print(f"[ok] {p.name}: tiles → {tile_name}")
 
 # cleanup
 handle.remove()

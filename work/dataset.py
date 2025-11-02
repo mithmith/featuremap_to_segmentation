@@ -1,159 +1,74 @@
-# dataset.py
-from __future__ import annotations
-import os
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional, Tuple
-
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+from typing import Tuple, List
 
-try:
-    from PIL import Image, UnidentifiedImageError
-except Exception as e:
-    raise RuntimeError("Pillow is required (pip install pillow).") from e
+# ---- helpers ----
+def _img_files_in_dir(d: Path) -> List[str]:
+    exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+    return [str(p) for p in d.rglob("*") if p.is_file() and p.suffix.lower() in exts]
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Config
-# ──────────────────────────────────────────────────────────────────────────────
+def _detect_layout(root: Path) -> str:
+    # split-first: root/train/<class>, root/val/<class>
+    if (root / "train").exists() and (root / "val").exists():
+        return "split_first"
+    # class-first: root/<class>/{train,val}
+    return "class_first"
 
-ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+def _gather_files(root: Path, split: str, pos: str, neg: str, layout: str) -> Tuple[List[str], List[str]]:
+    if layout == "split_first":
+        pos_dir = root / split / pos
+        neg_dir = root / split / neg
+    else:
+        pos_dir = root / pos / split
+        neg_dir = root / neg / split
+    if not pos_dir.exists():
+        raise FileNotFoundError(f"Not found: {pos_dir}")
+    if not neg_dir.exists():
+        raise FileNotFoundError(f"Not found: {neg_dir}")
+    return _img_files_in_dir(pos_dir), _img_files_in_dir(neg_dir)
 
-
-@dataclass
-class LoaderConfig:
-    dataset_root: str
-    pos: str  # "cat" | "dog"
-    img_size: int = 256
-    batch_size: int = 24
-    num_workers: int = 0
-    pin_memory: bool = False
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Robust PIL loader (skips broken files)
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _pil_loader_safe(path: str) -> Optional[Image.Image]:
+# ---- main API (совместимая версия) ----
+def build_datasets(dataset_root: str, pos: str, img_size: int):
+    """
+    Поддерживает обе раскладки:
+      A) split-first:   root/train/{animal,not_animal}, root/val/{animal,not_animal}
+      B) class-first:   root/{animal,not_animal}/{train,val}
+    """
+    # трансформы берём как раньше (из transform.py), при ошибке — лёгкий фолбек
     try:
-        with Image.open(path) as img:
-            return img.convert("RGB")
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
-        return None
-
-
-def _iter_images(dirpath: Path) -> Iterable[str]:
-    if not dirpath.exists():
-        return []
-    for root, _, files in os.walk(dirpath):
-        for f in files:
-            if Path(f).suffix.lower() in ALLOWED_EXTS:
-                yield str(Path(root) / f)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Dataset
-# Expected layout (per user description):
-#   dataset_for_cat/
-#       cat/train/*.jpg
-#       cat/val/*.jpg
-#       not_cat/train/*.jpg
-#       not_cat/val/*.jpg
-#   dataset_for_dog/
-#       dog/train/*.jpg
-#       dog/val/*.jpg
-#       not_dog/train/*.jpg
-#       not_dog/val/*.jpg
-# ──────────────────────────────────────────────────────────────────────────────
-
-class SafeBinaryDataset(Dataset):
-    def __init__(self,
-                 pos_files: List[str],
-                 neg_files: List[str],
-                 transform: Optional[Callable] = None):
-        self.pos_files = pos_files
-        self.neg_files = neg_files
-        self.files = [(p, 1) for p in pos_files] + [(n, 0) for n in neg_files]
-        self.transform = transform
-
-    def __len__(self) -> int:
-        return len(self.files)
-
-    def __getitem__(self, idx: int):
-        path, label = self.files[idx]
-        img = _pil_loader_safe(path)
-        if img is None:
-            # Signal to collate_fn to drop this sample
-            return None
-        if self.transform is not None:
-            img = self.transform(img)
-        return img, label
-
-
-def _split_dirs(root: Path, pos: str, split: str) -> Tuple[Path, Path]:
-    neg = f"not_{pos}"
-    pos_dir = root / pos / split
-    neg_dir = root / neg / split
-    return pos_dir, neg_dir
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Transforms (prefer user's transform.py if present)
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _build_transforms(img_size: int):
-    try:
-        from transform import build_transforms  # type: ignore
-        return build_transforms(img_size)
+        from transform import build_transforms
+        train_tf, val_tf = build_transforms(img_size)
     except Exception:
-        # Minimal internal fallback
-        from torchvision import transforms as T
-        IMAGENET_MEAN = (0.485, 0.456, 0.406)
-        IMAGENET_STD = (0.229, 0.224, 0.225)
-        train_tf = T.Compose([
-            T.RandomResizedCrop(img_size, scale=(0.7, 1.0), ratio=(0.8, 1.25)),
-            T.RandomHorizontalFlip(p=0.5),
-            T.RandomRotation(15),
-            T.ToTensor(),
-            T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ])
-        val_tf = T.Compose([
-            T.Resize(int(img_size * 1.14)),
-            T.CenterCrop(img_size),
-            T.ToTensor(),
-            T.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-        ])
-        return train_tf, val_tf
+        # упрощённый фолбек без torchvision
+        import numpy as np
+        from PIL import Image
+        mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
+        std  = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
+        def _to_tensor(img: Image.Image):
+            a = np.asarray(img, dtype=np.float32)
+            if a.ndim == 2:
+                a = np.stack([a, a, a], axis=-1)
+            a = a / 255.0
+            a = np.transpose(a, (2, 0, 1))
+            return torch.from_numpy(a)
+        class _T:
+            def __init__(self, size): self.size = size
+            def __call__(self, img: Image.Image):
+                img = img.resize((self.size, self.size), Image.BILINEAR)
+                x = _to_tensor(img)
+                return (x - mean) / std
+        train_tf, val_tf = _T(img_size), _T(img_size)
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _collate_skip_none(batch):
-    batch = [b for b in batch if b is not None]
-    if not batch:
-        return None
-    return torch.utils.data.dataloader.default_collate(batch)
-
-
-def build_datasets(dataset_root: str, pos: str, img_size: int) -> Tuple[Dataset, Dataset]:
     root = Path(dataset_root)
-    train_pos_dir, train_neg_dir = _split_dirs(root, pos, "train")
-    val_pos_dir, val_neg_dir = _split_dirs(root, pos, "val")
+    neg = "not_animal" if pos == "animal" else "animal"
+    layout = _detect_layout(root)
 
-    train_tf, val_tf = _build_transforms(img_size)
+    tr_pos, tr_neg = _gather_files(root, "train", pos, neg, layout)
+    va_pos, va_neg = _gather_files(root, "val",   pos, neg, layout)
 
-    train_ds = SafeBinaryDataset(
-        pos_files=list(_iter_images(train_pos_dir)),
-        neg_files=list(_iter_images(train_neg_dir)),
-        transform=train_tf
-    )
-    val_ds = SafeBinaryDataset(
-        pos_files=list(_iter_images(val_pos_dir)),
-        neg_files=list(_iter_images(val_neg_dir)),
-        transform=val_tf
-    )
+    train_ds = SafeBinaryDataset(tr_pos, tr_neg, transform=train_tf)
+    val_ds   = SafeBinaryDataset(va_pos, va_neg, transform=val_tf)
     return train_ds, val_ds
 
 
@@ -163,24 +78,13 @@ def build_dataloaders(dataset_root: str,
                       batch_size: int,
                       num_workers: int = 0,
                       pin_memory: bool = False) -> Tuple[DataLoader, DataLoader]:
-    train_ds, val_ds = build_datasets(dataset_root=dataset_root, pos=pos, img_size=img_size)
-
-    train_dl = DataLoader(
-        train_ds,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        collate_fn=_collate_skip_none,
-    )
-    val_dl = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        collate_fn=_collate_skip_none,
-    )
+    train_ds, val_ds = build_datasets(dataset_root, pos, img_size)
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                          num_workers=num_workers, pin_memory=pin_memory,
+                          collate_fn=_collate_skip_none)
+    val_dl   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                          num_workers=num_workers, pin_memory=pin_memory,
+                          collate_fn=_collate_skip_none)
     return train_dl, val_dl
 
 
@@ -190,16 +94,7 @@ def build_val_loader(dataset_root: str,
                      batch_size: int,
                      num_workers: int = 0,
                      pin_memory: bool = False) -> DataLoader:
-    """
-    Convenience for evaluate.py: returns only the validation loader.
-    """
-    _, val_ds = build_datasets(dataset_root=dataset_root, pos=pos, img_size=img_size)
-    val_dl = DataLoader(
-        val_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        collate_fn=_collate_skip_none,
-    )
-    return val_dl
+    _, val_ds = build_datasets(dataset_root, pos, img_size)
+    return DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                      num_workers=num_workers, pin_memory=pin_memory,
+                      collate_fn=_collate_skip_none)

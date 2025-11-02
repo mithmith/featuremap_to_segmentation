@@ -1,0 +1,40 @@
+{
+	"folders": [
+		{
+			"path": "../.git"
+		},
+		{
+			"path": "../__pycache__"
+		},
+		{
+			"path": "../analytics"
+		},
+		{
+			"path": "../feature_tables"
+		},
+		{
+			"path": "../fmaps_cat"
+		},
+		{
+			"path": "../fmaps_tiles"
+		},
+		{
+			"path": "../int_feature"
+		},
+		{
+			"path": "../model_analysis"
+		},
+		{
+			"path": "../models"
+		},
+		{
+			"path": "../models_ft"
+		},
+		{
+			"path": "../vizualization_and_maps"
+		},
+		{
+			"path": "."
+		}
+	]
+}
